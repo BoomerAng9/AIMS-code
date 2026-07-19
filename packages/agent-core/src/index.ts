@@ -177,3 +177,13 @@ export { Emitter } from './base/common/event';
 // canonical protocol shapes already exported via `./rpc` (`rpc/sdk-api.ts`),
 // and re-exporting them again would collide (TS2308).
 export * from './services';
+
+// ─── FOAI governance layer (fork delta over MoonshotAI/kimi-code) ────────────
+// The CLI launch gate + governance types. See packages/agent-core/src/foai and
+// FORK-CHANGES.md. Only the launch-facing surface is re-exported here; the
+// wiring helpers (governProvider, writeToolFor) are consumed internally.
+export {
+  GovernanceStartupError,
+  requireGovernedLaunch,
+  type FoaiGovernance,
+} from './foai';

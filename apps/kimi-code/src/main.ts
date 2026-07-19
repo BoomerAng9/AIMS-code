@@ -8,8 +8,10 @@
 import {
   createKimiHarness,
   flushDiagnosticLogs,
+  GovernanceStartupError,
   installGlobalProxyDispatcher,
   log,
+  requireGovernedLaunch,
   resolveGlobalLogPath,
   resolveKimiHome,
   type TelemetryClient,
@@ -72,6 +74,21 @@ export async function handleMainCommand(
   );
   if (preflightResult === 'exit') {
     process.exit(0);
+  }
+
+  // FOAI fail-closed launch gate. A coding session must not start ungoverned.
+  // This refuses to launch unless the A.I.M.S. Gateway is configured (INV-3) or
+  // an explicit, non-default acknowledgement opts out. It runs AFTER cheap
+  // subcommands (--help/--version/upgrade/migrate exit before reaching here) and
+  // BEFORE any session is created, so it gates exactly the run paths that matter.
+  try {
+    requireGovernedLaunch();
+  } catch (error) {
+    if (error instanceof GovernanceStartupError) {
+      process.stderr.write(`\n[FOAI] refusing to launch ungoverned.\n\n${error.message}\n\n`);
+      process.exit(78); // EX_CONFIG — configuration error
+    }
+    throw error;
   }
 
   if (validated.uiMode === 'print') {

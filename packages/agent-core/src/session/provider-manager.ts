@@ -1,5 +1,5 @@
 import type { Logger } from '#/logging/types';
-import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
+import type { GenerateOptions, ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 import {
@@ -51,6 +51,14 @@ export interface ModelProvider {
   readonly defaultModel?: string;
   resolveProviderConfig(model: string): ResolvedRuntimeProvider;
   resolveAuth?(model: string, options?: { readonly log?: Logger }): AuthorizedRequest | undefined;
+  /**
+   * FOAI: optional dispatch-time hook, invoked once per real model call at the
+   * `Agent.generate` boundary. Lets a governing decorator inject request-scoped
+   * options (e.g. a per-call Stage Zero decision-ID header) that must be fresh
+   * for each HTTP request rather than baked into the cached provider client.
+   * Non-governing providers omit it and are unaffected.
+   */
+  decorateGenerateOptions?(options: GenerateOptions | undefined): GenerateOptions | undefined;
 }
 
 export class SingleModelProvider implements ModelProvider {

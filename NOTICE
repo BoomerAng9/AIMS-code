@@ -1,0 +1,40 @@
+AIMS-code
+=========
+
+This repository, BoomerAng9/AIMS-code, is a DOWNSTREAM FORK of:
+
+    MoonshotAI/kimi-code  (https://github.com/MoonshotAI/kimi-code)
+    Package: @moonshot-ai/kimi-code
+    Copyright (c) 2026 Moonshot AI
+    Licensed under the MIT License.
+
+The upstream work was created by Moonshot AI. FOAI / ACHIEVEMOR did NOT author
+the original kimi-code and does not claim to have. The upstream LICENSE and its
+copyright notice are retained UNMODIFIED in this repository (see ./LICENSE), as
+the MIT License requires.
+
+FOAI modifications
+------------------
+
+FOAI (A.I.M.S. / ACHIEVEMOR) has added a source-level governance layer on top of
+the upstream code. The additions are governed by the same MIT License. The exact
+delta — every file added or changed and the reason for it — is documented in:
+
+    ./FORK-CHANGES.md
+
+In summary, the FOAI delta adds:
+
+  - INV-3 (Stage Zero): every model call is verified to originate from the
+    A.I.M.S. Gateway, and carries a per-call Stage Zero decision ID.
+  - CSP (Context Security Protocol): the blind whole-file overwrite path is
+    structurally removed; edits go through exact-match replacement.
+  - Receipts: enforcement events are emitted for Charlotte's audit ledger.
+  - Fail-closed startup: the runtime refuses to launch ungoverned unless an
+    explicit, non-default acknowledgement is provided.
+
+Attribution requirement (passed downstream)
+--------------------------------------------
+
+Any further redistribution of this work — modified or not — MUST retain the
+upstream MIT LICENSE and the Moonshot AI copyright notice above, per the terms
+of the MIT License. Do not remove upstream authorship.

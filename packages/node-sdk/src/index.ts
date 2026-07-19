@@ -69,6 +69,14 @@ export { effectiveModelAlias, loadRuntimeConfigSafe, resolveConfigPath } from '@
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
 export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
 
+// FOAI fail-closed launch gate — the CLI calls requireGovernedLaunch() before
+// starting any coding session. See FORK-CHANGES.md.
+export {
+  GovernanceStartupError,
+  requireGovernedLaunch,
+  type FoaiGovernance,
+} from '@moonshot-ai/agent-core';
+
 // Image compression — ingestion sites (e.g. the CLI's clipboard paste, the ACP
 // adapter) shrink oversized images while constructing the content part, before
 // it enters a prompt. Best effort: returns the original on any failure.

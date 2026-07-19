@@ -18,6 +18,7 @@ import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
+import { writeToolFor } from '../../foai';
 import type { ToolStore, ToolStoreData, ToolStoreKey } from '../../tools/store';
 import type {
   BuiltinTool,
@@ -704,7 +705,10 @@ export class ToolManager {
     this.builtinTools = new Map(
       [
         new b.ReadTool(kaos, workspace),
-        new b.WriteTool(kaos, workspace),
+        // FOAI CSP: under governance this returns a refusing Write tool that
+        // holds no filesystem handle, so the blind-overwrite path does not
+        // exist in the process. Edit (exact-match) remains the sanctioned path.
+        writeToolFor(kaos, workspace, this.agent.modelProvider),
         new b.EditTool(kaos, workspace),
         new b.GrepTool(kaos, workspace, this.agent.telemetry),
         new b.GlobTool(kaos, workspace, this.agent.telemetry),
