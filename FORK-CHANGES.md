@@ -54,19 +54,48 @@ upstream edits are minimal:
    - `SessionOptions.providerManager` type widened from `ProviderManager` to
      `ModelProvider | ProviderManager` so the governed decorator can be injected.
 
+4. `packages/agent-core/src/session/provider-manager.ts`
+   - `ModelProvider` interface gains one OPTIONAL method,
+     `decorateGenerateOptions?(options)`. Non-governing providers omit it.
+
+5. `packages/agent-core/src/agent/index.ts`
+   - `Agent.generate`'s dispatch funnel calls
+     `this.modelProvider?.decorateGenerateOptions?.(requestOptions)` immediately
+     before `rawGenerate`. This is the once-per-model-call boundary where the
+     per-call decision ID is injected. No-op for non-governing providers.
+
+6. `packages/agent-core/src/index.ts` + `packages/node-sdk/src/index.ts`
+   - Re-export the launch gate (`requireGovernedLaunch`, `GovernanceStartupError`).
+
+7. `apps/kimi-code/src/main.ts`
+   - Calls `requireGovernedLaunch()` before starting a session (fail-closed gate).
+
 Nothing else in upstream source is modified. `LICENSE` is untouched.
 
 ## The four controls
 
-- **INV-3 / Stage Zero** — `GovernedModelProvider.resolveProviderConfig()` verifies
-  the resolved provider's `base_url` is an origin under `AIMS_GATEWAY_BASE_URL`
-  (a provider with no base_url, or a different host/port/scheme, is refused, not
-  rewritten), then mints a fresh decision ID and stamps it onto the outbound
-  `defaultHeaders` **last**, so provider `custom_headers` cannot shadow it.
+- **INV-3 / Stage Zero** — enforced at TWO seams, deliberately separated:
+  - `GovernedModelProvider.resolveProviderConfig()` (config-time) verifies the
+    resolved provider's `base_url` is an origin under `AIMS_GATEWAY_BASE_URL`
+    (a provider with no base_url, or a different host/port/scheme, is refused,
+    not rewritten). This runs on every resolution, including metadata lookups,
+    and is a pure check — no ID minted.
+  - `GovernedModelProvider.decorateGenerateOptions()` (dispatch-time) runs once
+    per real model call at `Agent.generate`, mints the decision ID, and injects
+    it as a **request-scoped** header (`auth.headers`).
 
-- **Per-call decision ID** — `DecisionIdMinter` mints `sz-<session>-<seq>-<uuid>`
-  on every resolve. `resolveProviderConfig` is invoked per model request in
-  agent-core, so granularity is **per model call**, not per session. It is
+- **Per-call decision ID** — `DecisionIdMinter` mints `sz-<session>-<seq>-<uuid>`.
+  Minting happens at the dispatch boundary (`decorateGenerateOptions`), NOT in
+  `resolveProviderConfig`. This matters: an earlier version minted at
+  resolve-time and stamped `defaultHeaders`; a live fake-gateway e2e proved that
+  the OpenAI client bakes `defaultHeaders` at construction and the turn reuses
+  one client across steps, so all HTTP calls carried a SINGLE id — no better than
+  PR #72 at the wire — while the ledger over-emitted a receipt per metadata
+  resolution. Using a request-scoped header at the dispatch boundary forces a
+  per-request client rebuild (kosong `resolveAuthBackedClient` skips its cache
+  when `auth` is present), so **each model call carries a distinct id ON THE
+  WIRE**. Verified: a governed binary driven by a fake gateway emitted 12 model
+  calls → 12 distinct wire decision IDs → 12 dispatch receipts (1:1). It is
   deliberately not per-HTTP-request: a transport retry reuses the call's config
   and therefore its ID (the same Stage Zero decision). See `decision-id.ts`.
 

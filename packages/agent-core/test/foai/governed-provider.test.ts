@@ -21,7 +21,6 @@ function fakeInner(baseUrl: string | undefined): ModelProvider {
     resolveProviderConfig(model: string): ResolvedRuntimeProvider {
       return {
         providerName: 'fake',
-        // Only `baseUrl` and `defaultHeaders` are read by the governor.
         provider: { type: 'openai', model, baseUrl } as ResolvedRuntimeProvider['provider'],
         modelCapabilities: {} as ResolvedRuntimeProvider['modelCapabilities'],
         type: 'openai',
@@ -31,68 +30,75 @@ function fakeInner(baseUrl: string | undefined): ModelProvider {
   };
 }
 
-describe('GovernedModelProvider — INV-3 at the ModelProvider seam', () => {
-  it('stamps a DISTINCT decision id on each resolved call', () => {
-    const sink = new MemoryReceiptSink();
-    const gov = new GovernedModelProvider(
-      fakeInner('http://127.0.0.1:8317/v1'),
-      GOVERNANCE,
-      'sess-1',
-      sink,
-    );
+function governed(baseUrl: string | undefined, sink = new MemoryReceiptSink()) {
+  return {
+    gov: new GovernedModelProvider(fakeInner(baseUrl), GOVERNANCE, 'sess', sink),
+    sink,
+  };
+}
 
-    const first = gov.resolveProviderConfig('m').provider.defaultHeaders?.[DECISION_ID_HEADER];
-    const second = gov.resolveProviderConfig('m').provider.defaultHeaders?.[DECISION_ID_HEADER];
+describe('GovernedModelProvider — INV-3 (config-time)', () => {
+  it('allows a provider that routes through the gateway', () => {
+    const { gov } = governed('http://127.0.0.1:8317/v1');
+    expect(() => gov.resolveProviderConfig('m')).not.toThrow();
+  });
+
+  it('does NOT mint or emit on a config resolution (metadata lookups are frequent)', () => {
+    const { gov, sink } = governed('http://127.0.0.1:8317/v1');
+    gov.resolveProviderConfig('m');
+    gov.resolveProviderConfig('m');
+    // Config-time is a pure check: no dispatch receipts, no sequence consumed.
+    expect(sink.receipts.filter((r) => r.kind === 'stage_zero.call.dispatched')).toHaveLength(0);
+    expect(gov.callCount).toBe(0);
+  });
+
+  it('REFUSES a provider that does not route through the gateway', () => {
+    const { gov, sink } = governed('http://api.moonshot.ai/v1');
+    expect(() => gov.resolveProviderConfig('m')).toThrow(Inv3ViolationError);
+    expect(sink.receipts.some((r) => r.kind === 'stage_zero.call.refused')).toBe(true);
+  });
+
+  it('REFUSES a provider with no base_url (would fall back to vendor default)', () => {
+    const { gov } = governed(undefined);
+    expect(() => gov.resolveProviderConfig('m')).toThrow(Inv3ViolationError);
+  });
+});
+
+describe('GovernedModelProvider — per-call decision ID (dispatch-time)', () => {
+  it('injects a DISTINCT decision-id header on each generate call', () => {
+    const { gov } = governed('http://127.0.0.1:8317/v1');
+    const first = gov.decorateGenerateOptions(undefined)?.auth?.headers?.[DECISION_ID_HEADER];
+    const second = gov.decorateGenerateOptions(undefined)?.auth?.headers?.[DECISION_ID_HEADER];
 
     expect(first).toBeDefined();
     expect(second).toBeDefined();
-    expect(first).not.toBe(second); // per-call, not session-static
+    expect(first).not.toBe(second); // per-call, not session-static, ON THE WIRE
   });
 
-  it('emits a dispatch receipt per authorised call', () => {
-    const sink = new MemoryReceiptSink();
-    const gov = new GovernedModelProvider(
-      fakeInner('http://127.0.0.1:8317/v1'),
-      GOVERNANCE,
-      'sess-2',
-      sink,
-    );
-    gov.resolveProviderConfig('m');
-    gov.resolveProviderConfig('m');
+  it('preserves any pre-existing auth and headers while adding the decision id', () => {
+    const { gov } = governed('http://127.0.0.1:8317/v1');
+    const out = gov.decorateGenerateOptions({
+      auth: { apiKey: 'k', headers: { 'X-Keep': 'yes' } },
+    });
+    expect(out?.auth?.apiKey).toBe('k');
+    expect(out?.auth?.headers?.['X-Keep']).toBe('yes');
+    expect(out?.auth?.headers?.[DECISION_ID_HEADER]).toBeDefined();
+  });
 
+  it('emits exactly one dispatch receipt per generate call', () => {
+    const { gov, sink } = governed('http://127.0.0.1:8317/v1');
+    gov.decorateGenerateOptions(undefined);
+    gov.decorateGenerateOptions(undefined);
     const dispatched = sink.receipts.filter((r) => r.kind === 'stage_zero.call.dispatched');
     expect(dispatched).toHaveLength(2);
     expect(dispatched[0]?.detail['sequence']).toBe(1);
     expect(dispatched[1]?.detail['sequence']).toBe(2);
     expect(dispatched[0]?.missionId).toBe('mission-1');
   });
+});
 
-  it('REFUSES a provider that does not route through the gateway', () => {
-    const sink = new MemoryReceiptSink();
-    const gov = new GovernedModelProvider(
-      fakeInner('http://api.moonshot.ai/v1'),
-      GOVERNANCE,
-      'sess-3',
-      sink,
-    );
-    expect(() => gov.resolveProviderConfig('m')).toThrow(Inv3ViolationError);
-    expect(sink.receipts.some((r) => r.kind === 'stage_zero.call.refused')).toBe(true);
-  });
-
-  it('REFUSES a provider with no base_url (would fall back to vendor default)', () => {
-    const sink = new MemoryReceiptSink();
-    const gov = new GovernedModelProvider(fakeInner(undefined), GOVERNANCE, 'sess-4', sink);
-    expect(() => gov.resolveProviderConfig('m')).toThrow(Inv3ViolationError);
-  });
-
-  it('does not consume a sequence number on a refused call', () => {
-    const sink = new MemoryReceiptSink();
-    const gov = new GovernedModelProvider(fakeInner(undefined), GOVERNANCE, 'sess-5', sink);
-    expect(() => gov.resolveProviderConfig('m')).toThrow();
-    expect(gov.callCount).toBe(0); // refusal must not look like a lost receipt
-  });
-
-  it('passes through untouched when governance is disabled', () => {
+describe('GovernedModelProvider — disabled passthrough', () => {
+  it('does not decorate or emit when governance is disabled', () => {
     const disabled: FoaiGovernance = {
       enabled: false,
       gatewayBaseUrl: undefined,
@@ -101,10 +107,11 @@ describe('GovernedModelProvider — INV-3 at the ModelProvider seam', () => {
       receiptSink: undefined,
     };
     const sink = new MemoryReceiptSink();
-    // A non-gateway base_url is allowed through an ungoverned build.
     const gov = new GovernedModelProvider(fakeInner('http://elsewhere/v1'), disabled, 's', sink);
-    const resolved = gov.resolveProviderConfig('m');
-    expect(resolved.provider.defaultHeaders?.[DECISION_ID_HEADER]).toBeUndefined();
+    // A non-gateway base_url is allowed through an ungoverned build.
+    expect(() => gov.resolveProviderConfig('m')).not.toThrow();
+    const out = gov.decorateGenerateOptions({ auth: { apiKey: 'k' } });
+    expect(out?.auth?.headers?.[DECISION_ID_HEADER]).toBeUndefined();
     expect(sink.receipts).toHaveLength(0);
   });
 });

@@ -295,7 +295,13 @@ export class Agent {
             fields: requestLogFields,
           });
         }
-        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
+        // FOAI: dispatch-time governance hook. Runs once per real model call
+        // (this funnel), letting the governed provider mint a per-call Stage
+        // Zero decision ID and inject it as a request-scoped header. No-op for
+        // non-governing providers.
+        const governedOptions =
+          this.modelProvider?.decorateGenerateOptions?.(requestOptions) ?? requestOptions;
+        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, governedOptions);
       };
       if (generateOptions?.auth !== undefined) {
         return run(generateOptions);

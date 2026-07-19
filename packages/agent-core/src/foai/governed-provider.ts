@@ -1,25 +1,35 @@
 /**
- * GovernedModelProvider — INV-3 enforced at the `ModelProvider` seam.
+ * GovernedModelProvider — INV-3 enforced at the `ModelProvider` seam, with a
+ * genuinely per-model-call Stage Zero decision ID.
  *
- * Wraps any `ModelProvider` (in practice `ProviderManager`) and, on every
- * model-call resolution:
+ * TWO SEAMS, DELIBERATELY SEPARATED
+ * ─────────────────────────────────
+ * 1. `resolveProviderConfig` (config-time) — VERIFIES the resolved provider
+ *    routes through the A.I.M.S. Gateway. This runs on every resolution,
+ *    including the many metadata lookups agent-core makes (capabilities,
+ *    protocol props, …). It is a pure check: no ID minted, no receipt emitted,
+ *    because most of these calls never become an HTTP request.
  *
- *   1. VERIFIES the resolved provider actually points at the A.I.M.S.
- *      Gateway. A config that names some other endpoint is refused, not
- *      silently rewritten — rewriting would mask a misconfiguration and send
- *      traffic somewhere the operator did not intend.
- *   2. MINTS a fresh Stage Zero decision ID and stamps it onto the outbound
- *      headers, so the gateway can attribute this individual call.
- *   3. EMITS a receipt for the dispatch, so the ledger sees every call that
- *      was authorised — and, by the sequence gap, any that were not.
+ * 2. `decorateGenerateOptions` (dispatch-time) — runs ONCE per actual model
+ *    call, at `Agent.generate`'s dispatch funnel. It mints a fresh decision ID,
+ *    injects it as a REQUEST-SCOPED header (kosong `auth.headers`, which
+ *    override constructor-level defaults and force the OpenAI client to be
+ *    rebuilt per request), and emits exactly one `stage_zero.call.dispatched`
+ *    receipt.
  *
- * WHY WRAP RATHER THAN EDIT `ProviderManager`
- * ───────────────────────────────────────────
- * This fork must keep merging upstream. `ProviderManager` is a hot file
- * upstream; a decorator that satisfies the same published interface keeps the
- * FOAI delta out of it. The single wiring change lives at the construction
- * site (`rpc/core-impl.ts`), which is one line and trivially re-appliable.
+ * WHY THIS SPLIT MATTERS (learned from the live e2e)
+ * ──────────────────────────────────────────────────
+ * An earlier version minted in `resolveProviderConfig` and stamped the ID onto
+ * the provider's `defaultHeaders`. The fake-gateway e2e disproved it: the
+ * OpenAI client bakes `defaultHeaders` at construction and the turn reuses one
+ * client across steps, so all HTTP calls carried a SINGLE id — no better than
+ * PR #72's session-static header at the wire — while the ledger over-emitted a
+ * dispatch receipt for every metadata resolution. Minting at the real dispatch
+ * boundary with a request-scoped header fixes both: distinct id per model call
+ * ON THE WIRE, and one receipt per real call.
  */
+
+import type { GenerateOptions } from '@moonshot-ai/kosong';
 
 import type { Logger } from '#/logging/types';
 import type { ModelProvider, ResolvedRuntimeProvider } from '../session/provider-manager';
@@ -63,29 +73,36 @@ export class GovernedModelProvider implements ModelProvider {
     return this.context;
   }
 
-  /** Model calls resolved so far. Surfaced for receipts and tests. */
+  /** Model calls dispatched so far. Surfaced for receipts and tests. */
   get callCount(): number {
     return this.minter.callCount;
   }
 
   resolveProviderConfig(model: string): ResolvedRuntimeProvider {
     const resolved = this.inner.resolveProviderConfig(model);
-
     if (!this.config.enabled) return resolved;
 
-    const gateway = this.config.gatewayBaseUrl;
-    /* c8 ignore next 4 -- unreachable: resolveGovernance guarantees a URL when enabled. */
-    if (gateway === undefined) {
-      throw new Inv3ViolationError(
-        'INV-3: governance is enabled but no gateway base URL was resolved.',
-      );
-    }
+    // Config-time INV-3 check only. No minting here — this runs for metadata
+    // lookups too, which never reach the wire.
+    this.assertGatewayOrigin(model, resolved, this.gateway());
+    return resolved;
+  }
 
-    this.assertGatewayOrigin(model, resolved, gateway);
+  resolveAuth(
+    model: string,
+    options?: { readonly log?: Logger },
+  ): ReturnType<NonNullable<ModelProvider['resolveAuth']>> {
+    return this.inner.resolveAuth?.(model, options);
+  }
 
-    // Mint AFTER the origin check: a refused call must not consume a sequence
-    // number, otherwise the ledger shows a gap that looks like a lost receipt
-    // rather than a refusal.
+  /**
+   * Dispatch-time hook: called once per real model call by `Agent.generate`.
+   * Mints a per-call decision ID, records the dispatch, and injects the ID as a
+   * request-scoped header so it reaches the gateway on THIS call's HTTP request.
+   */
+  decorateGenerateOptions(options: GenerateOptions | undefined): GenerateOptions | undefined {
+    if (!this.config.enabled) return options;
+
     const decision = this.minter.mint();
     const stamped = decisionHeaders(decision, {
       missionId: this.config.missionId,
@@ -94,31 +111,32 @@ export class GovernedModelProvider implements ModelProvider {
 
     this.sink.emit(
       receipt('stage_zero.call.dispatched', this.context, {
-        model,
-        providerName: resolved.providerName,
         decisionId: decision.value,
         sequence: decision.sequence,
-        gateway,
+        gateway: this.config.gatewayBaseUrl,
       }),
     );
 
     return {
-      ...resolved,
-      provider: {
-        ...resolved.provider,
-        // Stage Zero headers are applied LAST so a provider's own
-        // `custom_headers` cannot shadow the decision ID. Config must not be
-        // able to blind the ledger.
-        defaultHeaders: { ...resolved.provider.defaultHeaders, ...stamped },
+      ...options,
+      auth: {
+        ...options?.auth,
+        // Request-scoped headers override constructor-level defaults and force
+        // a per-request client rebuild, so each model call carries its own ID.
+        headers: { ...options?.auth?.headers, ...stamped },
       },
     };
   }
 
-  resolveAuth(
-    model: string,
-    options?: { readonly log?: Logger },
-  ): ReturnType<NonNullable<ModelProvider['resolveAuth']>> {
-    return this.inner.resolveAuth?.(model, options);
+  private gateway(): string {
+    const gateway = this.config.gatewayBaseUrl;
+    /* c8 ignore next 4 -- unreachable: resolveGovernance guarantees a URL when enabled. */
+    if (gateway === undefined) {
+      throw new Inv3ViolationError(
+        'INV-3: governance is enabled but no gateway base URL was resolved.',
+      );
+    }
+    return gateway;
   }
 
   private assertGatewayOrigin(
