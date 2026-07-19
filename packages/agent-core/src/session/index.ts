@@ -40,7 +40,7 @@ import {
   prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
-import type { ProviderManager } from './provider-manager';
+import type { ModelProvider, ProviderManager } from './provider-manager';
 import {
   registerBuiltinSkills,
   SessionSkillRegistry,
@@ -67,7 +67,9 @@ export interface SessionOptions {
   readonly rpc: SDKSessionRPC;
   readonly toolServices?: ToolServices;
   readonly initializeMainAgent?: boolean | undefined;
-  readonly providerManager?: ProviderManager | undefined;
+  // FOAI: widened from ProviderManager to the ModelProvider interface so the
+  // governed decorator (GovernedModelProvider) can be injected here.
+  readonly providerManager?: ModelProvider | ProviderManager | undefined;
   readonly background?: BackgroundConfig | undefined;
   readonly hooks?: readonly HookDef[];
   readonly permissionRules?: readonly PermissionRule[];

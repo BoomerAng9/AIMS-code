@@ -55,8 +55,10 @@ import {
 } from '../skill';
 import {
   ProviderManager, type BearerTokenProvider,
+  type ModelProvider,
   type OAuthTokenProviderResolver
 } from '../session/provider-manager';
+import { governProvider } from '../foai';
 import { SessionAPIImpl } from '../session/rpc';
 import { normalizeWorkDir, SessionStore } from '../session/store/index';
 import { touchWorkspaceRegistry } from '../session/store/workspace-registry-file';
@@ -1177,13 +1179,17 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     };
   }
 
-  private resolveProviderManager(sessionId: string): ProviderManager {
-    return new ProviderManager({
+  private resolveProviderManager(sessionId: string): ModelProvider {
+    const base = new ProviderManager({
       config: () => this.config,
       kimiRequestHeaders: this.kimiRequestHeaders,
       resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
       promptCacheKey: sessionId,
     });
+    // FOAI: enforce INV-3 (gateway origin) + mint a per-call Stage Zero
+    // decision ID on every model call. No-op passthrough when governance is
+    // explicitly disabled. See packages/agent-core/src/foai.
+    return governProvider(base, sessionId);
   }
 
   private mergePluginMcpConfig(base: SessionMcpConfig | undefined): SessionMcpConfig | undefined {
