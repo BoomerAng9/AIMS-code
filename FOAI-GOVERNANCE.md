@@ -34,8 +34,14 @@ in config; enforcement (Write denial, per-call ID, fail-closed) is in source.
 ### Build status: PASS (observed)
 
 - `pnpm install --frozen-lockfile` — OK.
-- `pnpm run build` — OK (all packages + `apps/kimi-code`).
-- `pnpm --filter @moonshot-ai/agent-core run typecheck` — clean.
+- `pnpm run build` — OK (all packages + `apps/kimi-code`; `dist/main.mjs` ~16 MB).
+- `pnpm run typecheck` (full CI gate) — clean across `kimi-code`, `vscode`,
+  `kimi-web` (vue-tsc), `vis-server`, `vis-web`; `agent-core` + `node-sdk`
+  typecheck clean when filtered directly. These apps consume the changed
+  `ModelProvider` interface, so this is the load-bearing check.
+- `pnpm run lint` — the FOAI source + tests are **0 warnings / 0 errors**. The
+  full-repo run reports 2 errors, both in `apps/vis/web/test/analysis.test.ts`
+  (`no-unnecessary-type-assertion`) — pre-existing upstream, outside this diff.
 - Binary runs: `--version` → `0.27.0`; ungoverned `-p` → exit 78.
 
 Test-suite note (honest): the full `agent-core` vitest suite has ~119 pre-existing

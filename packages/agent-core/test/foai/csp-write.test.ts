@@ -10,6 +10,7 @@ import { MemoryReceiptSink } from '../../src/foai/receipts';
 import { EditTool, type EditInput } from '../../src/tools/builtin/file/edit';
 import type { WorkspaceConfig } from '../../src/tools/support/workspace';
 import { executeTool } from '../tools/fixtures/execute-tool';
+import { toolContentString } from '../tools/fixtures/fake-kaos';
 
 const signal = new AbortController().signal;
 const CONTEXT = { sessionId: 'sess-csp', missionId: 'm', taskId: 't' };
@@ -41,8 +42,8 @@ describe('CSP at source — the blind-overwrite path is unavailable', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(String(result.output)).toContain('Refused');
-    expect(String(result.output)).toContain('Edit');
+    expect(toolContentString(result)).toContain('Refused');
+    expect(toolContentString(result)).toContain('Edit');
     expect(sink.receipts.some((r) => r.kind === 'csp.tool.refused')).toBe(true);
   });
 

@@ -41,7 +41,9 @@ describe('receipts', () => {
   it('FileReceiptSink never throws on a bad path (receipts must not halt a session)', () => {
     // A directory path as the sink file is unwritable; emit must degrade, not throw.
     const sink = new FileReceiptSink(dir);
-    expect(() => sink.emit(receipt('csp.tool.refused', { sessionId: 's' }, {}))).not.toThrow();
+    expect(() => {
+      sink.emit(receipt('csp.tool.refused', { sessionId: 's' }, {}));
+    }).not.toThrow();
   });
 
   it('MemoryReceiptSink collects for assertions', () => {

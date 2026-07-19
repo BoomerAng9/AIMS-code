@@ -167,12 +167,18 @@ export function resolveGovernance(env: Record<string, string | undefined>): Foai
     );
   }
 
+  // An empty or whitespace-only sink path means "no sink", not "" — so map it
+  // to undefined explicitly (nullish coalescing would keep the empty string).
+  const receiptSinkRaw = env[RECEIPT_SINK_ENV]?.trim();
+  const receiptSink =
+    receiptSinkRaw !== undefined && receiptSinkRaw.length > 0 ? receiptSinkRaw : undefined;
+
   return {
     enabled: true,
     gatewayBaseUrl,
     missionId: env[MISSION_ID_ENV] ?? '',
     taskId: env[TASK_ID_ENV] ?? '',
-    receiptSink: env[RECEIPT_SINK_ENV]?.trim() || undefined,
+    receiptSink,
   };
 }
 
