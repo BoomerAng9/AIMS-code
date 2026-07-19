@@ -18,7 +18,11 @@ import { WriteTool } from '../tools/builtin/file/write';
 import type { WorkspaceConfig } from '../tools/support/workspace';
 import { GovernedModelProvider } from './governed-provider';
 import { GovernedWriteTool } from './governed-write';
-import { type FoaiGovernance, governance } from './governance';
+import {
+  type FoaiGovernance,
+  GovernanceStartupError,
+  governance,
+} from './governance';
 import type { ModelProvider } from '../session/provider-manager';
 import {
   MemoryReceiptSink,
@@ -37,10 +41,43 @@ interface FoaiRuntime {
 
 let runtime: FoaiRuntime | undefined;
 
-/** Process-wide governance + receipt sink, initialised once. */
+/** Governance verdict used when the process is embedding agent-core as a
+ * LIBRARY and never went through the CLI launch gate. Enforcement is disabled
+ * in that path on purpose: agent-core is a library, and a library is not the
+ * thing that "launches". The fail-closed policy lives at the CLI boundary
+ * (`requireGovernedLaunch`, wired into apps/kimi-code), which runs BEFORE any
+ * session or tool is constructed. In the real binary that gate has already
+ * primed `governance()` to the enabled verdict by the time this is reached, so
+ * this fallback is never taken there — only in tests and third-party embeds. */
+const LIBRARY_UNGOVERNED: FoaiGovernance = {
+  enabled: false,
+  gatewayBaseUrl: undefined,
+  missionId: '',
+  taskId: '',
+  receiptSink: undefined,
+};
+
+/**
+ * Process-wide governance + receipt sink, initialised once.
+ *
+ * Non-throwing by contract: it reflects the governance verdict but never itself
+ * aborts a process. If governance was configured (or the CLI gate already
+ * resolved it), that verdict is used; if the environment is unconfigured, the
+ * library-ungoverned verdict is used. Refusing to launch ungoverned is the CLI
+ * gate's job, not this function's — doing it here would abort every embed and
+ * test at tool-registration time, far from the launch boundary.
+ */
 export function foaiRuntime(): FoaiRuntime {
   if (runtime === undefined) {
-    const config = governance();
+    let config: FoaiGovernance;
+    try {
+      config = governance();
+    } catch (error) {
+      // Unconfigured library/test context. The CLI gate handles the loud
+      // refusal; here we degrade to ungoverned rather than crash an embed.
+      if (!(error instanceof GovernanceStartupError)) throw error;
+      config = LIBRARY_UNGOVERNED;
+    }
     runtime = {
       config,
       sink: config.enabled ? sinkFor(config.receiptSink) : new NullReceiptSink(),

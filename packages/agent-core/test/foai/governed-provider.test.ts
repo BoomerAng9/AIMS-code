@@ -62,8 +62,8 @@ describe('GovernedModelProvider — INV-3 at the ModelProvider seam', () => {
 
     const dispatched = sink.receipts.filter((r) => r.kind === 'stage_zero.call.dispatched');
     expect(dispatched).toHaveLength(2);
-    expect(dispatched[0]?.detail.sequence).toBe(1);
-    expect(dispatched[1]?.detail.sequence).toBe(2);
+    expect(dispatched[0]?.detail['sequence']).toBe(1);
+    expect(dispatched[1]?.detail['sequence']).toBe(2);
     expect(dispatched[0]?.missionId).toBe('mission-1');
   });
 

@@ -22,7 +22,7 @@ describe('receipts', () => {
     expect(r.sessionId).toBe('s');
     expect(r.missionId).toBe('m');
     expect('taskId' in r).toBe(false);
-    expect(r.detail.a).toBe(1);
+    expect(r.detail['a']).toBe(1);
     expect(typeof r.at).toBe('string');
   });
 

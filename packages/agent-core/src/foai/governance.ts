@@ -183,10 +183,35 @@ let cached: FoaiGovernance | undefined;
  *
  * Cached so every call site sees one consistent verdict — a later mutation of
  * `process.env` must not be able to flip governance mid-session.
+ *
+ * @throws GovernanceStartupError when governance is on but unconfigured. Callers
+ *   that must not abort (library wiring) should catch it; the CLI launch gate
+ *   (`requireGovernedLaunch`) lets it propagate.
  */
 export function governance(): FoaiGovernance {
   cached ??= resolveGovernance(process.env);
   return cached;
+}
+
+/**
+ * The fail-closed LAUNCH gate. Call once at the CLI entrypoint, before any
+ * session is created.
+ *
+ * Unlike `foaiRuntime()` (library-safe, non-throwing), this REFUSES to proceed
+ * when governance cannot be established: the `GovernanceStartupError` propagates
+ * so the caller prints it and exits non-zero. Running ungoverned must be a loud,
+ * deliberate act — this is where that is enforced. On success it primes the
+ * cache so every later `governance()` / `foaiRuntime()` sees the same verdict.
+ *
+ * @throws GovernanceStartupError when the launch is not governed and not
+ *   explicitly, correctly acknowledged as ungoverned.
+ */
+export function requireGovernedLaunch(
+  env: Record<string, string | undefined> = process.env,
+): FoaiGovernance {
+  const verdict = resolveGovernance(env);
+  cached = verdict;
+  return verdict;
 }
 
 /** Test-only reset of the cached verdict. */
